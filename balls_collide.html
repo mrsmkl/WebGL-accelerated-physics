@@ -1,0 +1,1031 @@
+<html>
+
+<head>
+<title>Bouncing balls</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="sylvester.js"></script>
+<script type="text/javascript" src="glUtils.js"></script>
+
+
+<script id="per-fragment-lighting-fs" type="x-shader/x-fragment">
+  #ifdef GL_ES
+  precision highp float;
+  #endif
+
+  varying vec2 vTextureCoord;
+  varying vec4 vTransformedNormal;
+  varying vec4 vPosition;
+
+  uniform float uMaterialShininess;
+
+  uniform bool uShowSpecularHighlights;
+  uniform bool uUseLighting;
+  uniform bool uUseTextures;
+
+  uniform vec3 uAmbientColor;
+
+  uniform vec3 uPointLightingLocation;
+  uniform vec3 uPointLightingSpecularColor;
+  uniform vec3 uPointLightingDiffuseColor;
+
+  uniform sampler2D uSampler;
+
+  void main(void) {
+    vec3 lightWeighting;
+    if (!uUseLighting) {
+      lightWeighting = vec3(1.0, 1.0, 1.0);
+    } else {
+      vec3 lightDirection = normalize(uPointLightingLocation - vPosition.xyz);
+      vec3 normal = normalize(vTransformedNormal.xyz);
+
+      float specularLightWeighting = 0.0;
+      if (uShowSpecularHighlights) {
+        vec3 eyeDirection = normalize(-vPosition.xyz);
+        vec3 reflectionDirection = reflect(-lightDirection, normal);
+
+        specularLightWeighting = pow(max(dot(reflectionDirection, eyeDirection), 0.0), uMaterialShininess);
+      }
+
+      float diffuseLightWeighting = max(dot(normal, lightDirection), 0.0);
+      lightWeighting = uAmbientColor
+        + uPointLightingSpecularColor * specularLightWeighting
+        + uPointLightingDiffuseColor * diffuseLightWeighting;
+    }
+
+    vec4 fragmentColor;
+    if (uUseTextures) {
+      fragmentColor = texture2D(uSampler, vec2(vTextureCoord.s, vTextureCoord.t));
+    } else {
+      fragmentColor = vec4(1.0, 1.0, 1.0, 1.0);
+    }
+    gl_FragColor = vec4(fragmentColor.rgb * lightWeighting, fragmentColor.a);
+  }
+</script>
+
+<script id="per-fragment-lighting-vs" type="x-shader/x-vertex">
+  precision highp float;
+  
+  attribute vec3 aVertexPosition;
+  attribute vec3 aVertexNormal;
+  attribute vec2 aTextureCoord;
+  
+  const float num = 1000.0;
+  const float prec = 255.0;
+
+  uniform float number;
+
+  uniform sampler2D uPos;
+
+  uniform mat4 uMVMatrix;
+  uniform mat4 uPMatrix;
+  uniform mat4 uNMatrix;
+
+  varying vec2 vTextureCoord;
+  varying vec4 vTransformedNormal;
+  varying vec4 vPosition;
+
+  const float sz = 100.0;
+  
+  vec4 getLoc(float loc) {
+  	vec4 col1 = texture2D(uPos, vec2(loc/num, 0.0/6.0));
+  	vec4 col2 = texture2D(uPos, vec2(loc/num, 1.0/6.0));
+  	vec4 col3 = texture2D(uPos, vec2(loc/num, 2.0/6.0));
+  	float x = col1.r + col1.g/prec + col1.b/(prec*prec);
+  	float y = col2.r + col2.g/prec + col2.b/(prec*prec);
+  	float z = col3.r + col3.g/prec + col3.b/(prec*prec);
+  	x = x > 1.0 ? 1.0 : x;
+  	y = y > 1.0 ? 1.0 : y;
+  	z = z > 1.0 ? 1.0 : z;
+//    y = 0.5;
+//    z = 0.5;
+  	return vec4(sz*x-sz/2.0,sz*y-sz/2.0,sz*z-sz/2.0,1.0);
+  }
+
+  vec4 loc(float n) {
+  	return vec4(10.0*sin(3*n), 1.0*cos(3*n), n, 1.0); 
+  }
+
+  void main(void) {
+  	mat4 extra;
+  	extra[0] = vec4(1.0,0.0,0.0,0.0);
+  	extra[1] = vec4(0.0,1.0,0.0,0.0);
+  	extra[2] = vec4(0.0,0.0,1.0,0.0);
+  	extra[3] = getLoc(number);
+    vPosition = extra * uMVMatrix * vec4(aVertexPosition, 1.0);
+//    vPosition = uMVMatrix * vec4(aVertexPosition, 1.0);
+    gl_Position = uPMatrix * vPosition;
+    vTextureCoord = aTextureCoord;
+    vTransformedNormal = uNMatrix * vec4(aVertexNormal, 1.0);
+  }
+</script>
+
+<script id="phys-vs" type="x-shader/x-vertex"> 
+
+//  precision highp float;
+
+const float num = 1000.0;
+
+attribute vec3 aVertexPosition; // Check from texture
+
+uniform sampler2D uSampler;
+
+uniform int num_items;
+
+uniform float time;
+
+const float prec = 255.0;
+varying vec3 vPosition;
+varying vec3 vVelocity;
+varying float fLinear;
+
+vec3 getLoc(float loc) {
+	vec4 col1 = texture2D(uSampler, vec2(loc/num, 0.0));
+	vec4 col2 = texture2D(uSampler, vec2(loc/num, 1.0/6.0));
+	vec4 col3 = texture2D(uSampler, vec2(loc/num, 2.0/6.0));
+	float x = col1.r + col1.g/prec + col1.b/(prec*prec);
+	float y = col2.r + col2.g/prec + col2.b/(prec*prec);
+	float z = col3.r + col3.g/prec + col3.b/(prec*prec);
+	return vec3(x,y,z);
+}
+
+vec3 getVelo(float loc) {
+	vec4 col1 = texture2D(uSampler, vec2(loc/num, 3.0/6.0));
+	vec4 col2 = texture2D(uSampler, vec2(loc/num, 4.0/6.0));
+	vec4 col3 = texture2D(uSampler, vec2(loc/num, 5.0/6.0));
+	float x = col1.r + col1.g/prec + col1.b/(prec*prec);
+	float y = col2.r + col2.g/prec + col2.b/(prec*prec);
+	float z = col3.r + col3.g/prec + col3.b/(prec*prec);
+	return vec3(2.0*x-1.0,2.0*y-1.0,2.0*z-1.0);
+}
+
+vec3 collide(vec3 pi, vec3 pj, vec3 vi, vec3 vj) {
+	pi = pi + vi;
+	pj = pj + vj;
+	vec3 dist = pi - pj; 
+	float d = length(dist);
+	// Kinetic energy (should be conserved)
+	vec3 dv = normalize(dist);
+	//	vec3 dv = dist == 0.0 ? vec3(0.0,0.0,0.0) : normalize(dist);
+	float res = (dot(vi,dv) - dot(vj,dv)) / 2.0;
+	//		res = max(-0.001, min(res,0.001));
+//	if (d < 0.02 && d > 0.0002) return res * dv;
+/*		float e1 = dot(vi,vi) + dot(vj,vj);
+		float e2 = dot(vi-dv*res, vi-dv*res) +
+		           dot(vj+dv*res, vj+dv*res); */
+  // Calculate kinetic energy
+	if (d < 0.02 && d > 0.000002) {
+		// if (abs(e1-e2) > 0.1) return vec3(0.0,0.0,0.0);
+//		if (res > 0.1) return vec3(0.0,0.0,-0.01);
+		return res*dv;
+	}
+//	if (d < 0.0002) return vec3(0.0,0.0,-0.001);
+	else return vec3(0.0,0.0,0.0);
+/*	d = min(0.01, d);
+	d = floor(d / 0.01);
+	return (1.0 - d) * res * dv; */
+	//		return (1.0 - d) * vec3(0.0,0.0,-0.001);
+}
+
+vec3 gravity(vec3 pi, vec3 pj) {
+	vec3 dist = pi - pj; 
+	float d = length(dist);
+	//    		var dist_n = dist.x(1/d);
+	float mag = min(0.001, 0.000000005/(d*d));
+	return (mag/d)*dist;
+}
+
+void main(void) {
+	vec3 ov = getVelo(aVertexPosition.x);
+	vec3 p = getLoc(aVertexPosition.x);
+	
+	vPosition = p + ov;
+	vec3 v = ov;
+
+	int i = int(aVertexPosition.x);
+	
+	// v = v + vec3(0.00001,0.0,0.0);
+	
+	
+	// Handle collisions
+	for (int j = 0; j < num_items; j++) {
+		v = v - collide(p, getLoc(float(j)), ov, getVelo(float(j)));
+	}
+	for (int j = i; j < i+1; j++) {
+		v = v + collide(p, getLoc(float(j)), ov, getVelo(float(j)));
+	}
+	for (int j = 0; j < num_items; j++) {
+		v = v - gravity(p, getLoc(float(j)));
+	}
+	for (int j = i; j < i+1; j++) {
+		v = v - gravity(p, getLoc(float(j)));
+	}
+/*
+	if (vPosition.x < 0.0) vPosition.x = 1.0;
+	else if (vPosition.x > 1.0) vPosition.x = 0.0;
+	if (vPosition.y < -0.01) vPosition.y = 1.0;
+	else if (vPosition.y > 1.0) vPosition.y = 0.0;
+	if (vPosition.z < -0.01) vPosition.z = 0.99;
+	else if (vPosition.z > 1.0) vPosition.z = 0.01;
+	vVelocity = v;
+	*/
+	
+	if (vPosition.x < 0.0 || vPosition.x > 1.0) v.x = -v.x;
+	if (vPosition.y < 0.0 || vPosition.y > 1.0) v.y = -v.y;
+	if (vPosition.z < 0.0 || vPosition.z > 1.0) v.z = -v.z;
+	
+	float upper = 0.1;
+	if (v.x > upper) v.x = upper;
+	if (v.x < -upper) v.x = -upper;
+	if (v.y > upper) v.y = upper;
+	if (v.y < -upper) v.y = -upper;
+	if (v.z > upper) v.z = upper;
+	if (v.z < -upper) v.z = -upper;
+//	vVelocity = v;
+//	vVelocity = vec3(0.0, 0.0, 0.0);
+	vVelocity = v * 0.99;
+
+	//
+  float loc = 2.0*(aVertexPosition.x+1)/(num+1.0) - 1.0;
+  gl_Position = vec4(loc, aVertexPosition.y, 0.0, 1.0);
+	fLinear = aVertexPosition.y;
+//  fLinear = check(aVertexPosition.x);
+}
+</script> 
+
+<script id="phys-fs" type="x-shader/x-fragment"> 
+varying highp vec3 vPosition;
+varying highp vec3 vVelocity;
+varying float fLinear;
+
+const float prec = 255.0;
+
+highp vec4 fixed_p(highp float x) {
+	x = x > 1.0 ? 1.0 : x;
+	x = x < 0.0 ? 0.0 : x;
+	float r = floor(x*prec);
+	x = x*prec - r;
+	float g = floor(x*prec);
+	x = x*prec - g;
+	float b = floor(x*prec);
+	x = x*prec - b;
+//	return vec4(r/256.0, g/256.0, 0.0, 1.0);
+	return vec4(r/prec, g/prec, x, 1.0);
+}
+
+highp vec4 fixed_v(highp float x) {
+	x = (x + 1.0) / 2.0;
+	x = x > 1.0 ? 1.0 : x;
+	x = x < 0.0 ? 0.0 : x;
+	float r = floor(x*prec);
+	x = x*prec - r;
+	float g = floor(x*prec);
+	x = x*prec - g;
+	float b = floor(x*prec);
+	x = x*prec - b;
+//	return vec4(r/256.0, g/256.0, 0.0, 1.0);
+	return vec4(r/prec, g/prec, x, 1.0);
+}
+
+void main(void) {
+	
+	float n = ((fLinear + 1.0) / 2.0) * 6.0;
+
+	if (n < 1.0) {
+  	gl_FragColor = fixed_p(vPosition.x);
+	}
+	else if (n < 2.0) {
+    gl_FragColor = fixed_p(vPosition.y);
+	}
+	else if (n < 3.0) {
+  	gl_FragColor = fixed_p(vPosition.z);
+	} 
+	else if (n < 4.0) {
+  	gl_FragColor = fixed_v(vVelocity.x);
+	} 
+	else if (n < 5.0) {
+  	gl_FragColor = fixed_v(vVelocity.y);
+	} 
+	else {
+  	gl_FragColor = fixed_v(vVelocity.z);
+	} 
+}
+</script>
+
+<script type="text/javascript">
+
+  var gl;
+  function initGL(canvas) {
+    try {
+      gl = canvas.getContext("experimental-webgl");
+      gl.viewportWidth = canvas.width;
+      gl.viewportHeight = canvas.height;
+    } catch(e) {
+    }
+    if (!gl) {
+      alert("Could not initialise WebGL, sorry :-(");
+    }
+  }
+
+  function getShader(gl, id) {
+    var shaderScript = document.getElementById(id);
+    if (!shaderScript) {
+      return null;
+    }
+
+    var str = "";
+    var k = shaderScript.firstChild;
+    while (k) {
+      if (k.nodeType == 3) {
+        str += k.textContent;
+      }
+      k = k.nextSibling;
+    }
+
+    var shader;
+    if (shaderScript.type == "x-shader/x-fragment") {
+      shader = gl.createShader(gl.FRAGMENT_SHADER);
+    } else if (shaderScript.type == "x-shader/x-vertex") {
+      shader = gl.createShader(gl.VERTEX_SHADER);
+    } else {
+      return null;
+    }
+
+    gl.shaderSource(shader, str);
+    gl.compileShader(shader);
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      alert(gl.getShaderInfoLog(shader));
+      return null;
+    }
+
+    return shader;
+  }
+
+  var shaderProgram;
+  function initShaders() {
+    var fragmentShader = getShader(gl, "per-fragment-lighting-fs");
+    var vertexShader = getShader(gl, "per-fragment-lighting-vs");
+
+    shaderProgram = gl.createProgram();
+    gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(shaderProgram, fragmentShader);
+    gl.linkProgram(shaderProgram);
+
+    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+      alert("Could not initialise shaders");
+    }
+
+    gl.useProgram(shaderProgram);
+
+    shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+
+    shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+
+    shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+    /*
+*/
+    shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+    shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+    shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+    shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+    shaderProgram.pSamplerUniform = gl.getUniformLocation(shaderProgram, "uPos");
+    shaderProgram.materialShininessUniform = gl.getUniformLocation(shaderProgram, "uMaterialShininess");
+    shaderProgram.showSpecularHighlightsUniform = gl.getUniformLocation(shaderProgram, "uShowSpecularHighlights");
+    shaderProgram.useTexturesUniform = gl.getUniformLocation(shaderProgram, "uUseTextures");
+    shaderProgram.useLightingUniform = gl.getUniformLocation(shaderProgram, "uUseLighting");
+    shaderProgram.ambientColorUniform = gl.getUniformLocation(shaderProgram, "uAmbientColor");
+    shaderProgram.pointLightingLocationUniform = gl.getUniformLocation(shaderProgram, "uPointLightingLocation");
+    shaderProgram.pointLightingSpecularColorUniform = gl.getUniformLocation(shaderProgram, "uPointLightingSpecularColor");
+    shaderProgram.pointLightingDiffuseColorUniform = gl.getUniformLocation(shaderProgram, "uPointLightingDiffuseColor");
+  }
+
+  var physProgram;
+  function initPhysics() {
+    var fragmentShader = getShader(gl, "phys-fs");
+    var vertexShader = getShader(gl, "phys-vs");
+
+    var shaderProgram = gl.createProgram();
+    gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(shaderProgram, fragmentShader);
+    gl.linkProgram(shaderProgram);
+
+    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+      alert("Could not initialise shaders");
+    }
+
+    gl.useProgram(shaderProgram);
+
+    shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+
+    shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+    
+    physProgram = shaderProgram;
+  }
+
+
+  function handleLoadedTexture(texture) {
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+    gl.generateMipmap(gl.TEXTURE_2D);
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+
+  var earthTexture;
+  var galvanizedTexture;
+  function initTextures() {
+    earthTexture = gl.createTexture();
+    earthTexture.image = new Image();
+    earthTexture.image.onload = function() {
+      handleLoadedTexture(earthTexture)
+    }
+    earthTexture.image.src = "earth.jpg";
+
+    galvanizedTexture = gl.createTexture();
+    galvanizedTexture.image = new Image();
+    galvanizedTexture.image.onload = function() {
+      handleLoadedTexture(galvanizedTexture)
+    }
+    galvanizedTexture.image.src = "galvanized.jpg";
+  }
+
+
+  var mvMatrix;
+  var mvMatrixStack = [];
+
+  function mvPushMatrix(m) {
+    if (m) {
+      mvMatrixStack.push(m.dup());
+      mvMatrix = m.dup();
+    } else {
+      mvMatrixStack.push(mvMatrix.dup());
+    }
+  }
+
+  function mvPopMatrix() {
+    if (mvMatrixStack.length == 0) {
+      throw "Invalid popMatrix!";
+    }
+    mvMatrix = mvMatrixStack.pop();
+    return mvMatrix;
+  }
+
+  function loadIdentity() {
+    mvMatrix = Matrix.I(4);
+  }
+
+  function multMatrix(m) {
+    mvMatrix = mvMatrix.x(m);
+  }
+
+  function mvTranslate(v) {
+    var m = Matrix.Translation(v).ensure4x4();
+    multMatrix(m);
+  }
+
+  function createRotationMatrix(angle, v) {
+    var arad = angle * Math.PI / 180.0;
+    return Matrix.Rotation(arad, $V([v[0], v[1], v[2]])).ensure4x4();
+  }
+
+  function mvRotate(angle, v) {
+    multMatrix(createRotationMatrix(angle, v));
+  }
+
+  function setParami(prog, str, val) {
+  	var loc = gl.getUniformLocation(prog, str);
+    gl.uniform1i(loc, val);
+  }
+
+  function setParamf(prog, str, val) {
+  	var loc = gl.getUniformLocation(prog, str);
+    gl.uniform1f(loc, val);
+  }
+  
+  var pMatrix;
+  function perspective(fovy, aspect, znear, zfar) {
+    pMatrix = makePerspective(fovy, aspect, znear, zfar);
+  }
+
+  function setMatrixUniforms() {
+    gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, new WebGLFloatArray(pMatrix.flatten()));
+    gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, new WebGLFloatArray(mvMatrix.flatten()));
+
+    var normalMatrix = mvMatrix.inverse();
+    normalMatrix = normalMatrix.transpose();
+    gl.uniformMatrix4fv(shaderProgram.nMatrixUniform, false, new WebGLFloatArray(normalMatrix.flatten()));
+  }
+
+  var prec = 255;
+  function toFixed(x) {
+  	x = x > 1.0 ? 1.0 : x;
+  	var r = Math.floor(x*prec);
+  	x = x*prec - r;
+  	var g = Math.floor(x*prec);
+  	x = x*prec - g;
+  	var b = Math.floor(x*prec);
+  	x = x*prec - b;
+//  	return [r/prec, g/prec, x];
+  	return [r, g, b];
+  }
+  
+  function randomLocs(num) {
+  	var locs = [];
+  	for (var i = 0; i < num; i++) {
+  		var s = 1.0;
+  		locs[i] = [Math.random()*s - s/2 + 0.5, Math.random()*s - s/2 + 0.5, Math.random()*s -s/2 + 0.5];
+//  		locs[i] = [Math.random(), Math.random(), Math.random()];
+//  		locs[i] = [Math.random(), Math.random(), 0.0];
+  	}
+  	return locs;
+  }
+  
+  function randomVels(num) {
+  	var locs = [];
+  	for (var i = 0; i < num; i++) {
+  		var s = 0.001;
+//  		locs[i] = [Math.random()*s - s/2 + 0.5, Math.random()*s - s/2 + 0.5, Math.random()*s -s/2 + 0.5];
+//  		locs[i] = [Math.random()*s - s/2 + 0.5, Math.random()*s - s/2 + 0.5, 0.5];
+  		locs[i] = [0.5, 0.5, 0.5];
+  	}
+  	return locs;
+  }
+
+  function makeData(dta, vdta, num) {
+
+    var buffer = null;
+    
+    if (dta != null) {
+    	buffer = new ArrayBuffer(3*6*num);
+    	var c_data = new Uint8Array(buffer, 0);
+    	for (var i = 0; i < num; i++) {
+    		var x = toFixed(dta[i][0]);
+    		c_data[i*3 + 0*num*3 + 0] = x[0];
+    		c_data[i*3 + 0*num*3 + 1] = x[1];
+    		c_data[i*3 + 0*num*3 + 2] = x[2];
+    		var y = toFixed(dta[i][1]);
+    		c_data[i*3 + 1*num*3 + 0] = y[0];
+    		c_data[i*3 + 1*num*3 + 1] = y[1];
+    		c_data[i*3 + 1*num*3 + 2] = y[2];
+    		var z = toFixed(dta[i][2]);
+    		c_data[i*3 + 2*num*3 + 0] = z[0];
+    		c_data[i*3 + 2*num*3 + 1] = z[1];
+    		c_data[i*3 + 2*num*3 + 2] = z[2];
+    		var vx = toFixed(vdta[i][0]);
+    		c_data[i*3 + 3*num*3 + 0] = vx[0];
+    		c_data[i*3 + 3*num*3 + 1] = vx[1];
+    		c_data[i*3 + 3*num*3 + 2] = vx[2];
+    		var vy = toFixed(vdta[i][1]);
+    		c_data[i*3 + 4*num*3 + 0] = vy[0];
+    		c_data[i*3 + 4*num*3 + 1] = vy[1];
+    		c_data[i*3 + 4*num*3 + 2] = vy[2];
+    		var vz = toFixed(vdta[i][2]);
+    		c_data[i*3 + 5*num*3 + 0] = vz[0];
+    		c_data[i*3 + 5*num*3 + 1] = vz[1];
+    		c_data[i*3 + 5*num*3 + 2] = vz[2];
+    	}
+    }
+    
+    return buffer;
+    
+  }
+
+  function makeFBO(gl, w, h, dta) {
+    this.renderBuf = gl.createRenderbuffer();
+    this.frameBuf = gl.createFramebuffer();
+    this.texture = gl.createTexture();
+
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, w, h, 0, gl.RGB, gl.UNSIGNED_BYTE, dta);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.frameBuf);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, this.renderBuf);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.texture, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.renderBuf);
+//    gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+//    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+//    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // These lines hold object data
+  var lineBuffer;
+  function initLines(num) {
+  	lineBuffer = gl.createBuffer();
+	  gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+	  var vertices = [];
+	  for (var i = 0; i < num; i++) {
+		  vertices[i*6 + 0] = i; // 2.0*i/(num+1) - 1.0;
+		  vertices[i*6 + 1] = -1.0;
+		  vertices[i*6 + 2] = 0.0;
+		  vertices[i*6 + 3] = i; // 2.0*i/(num+1) - 1.0;
+		  vertices[i*6 + 4] = 1.0;
+		  vertices[i*6 + 5] = 0.0;
+		}
+		gl.bufferData(gl.ARRAY_BUFFER, new WebGLFloatArray(vertices), gl.STATIC_DRAW);
+		lineBuffer.itemSize = 3;
+		lineBuffer.numItems = num*2;
+	}
+
+  // Spheres
+  var moonVertexPositionBuffer;
+  var moonVertexNormalBuffer;
+  var moonVertexTextureCoordBuffer;
+  var moonVertexIndexBuffer;
+  
+  function initBuffers() {
+  	var latitudeBands = 30;
+    var longitudeBands = 30;
+    var radius = 1;
+    
+    var vertexPositionData = [];
+    var normalData = [];
+    var textureCoordData = [];
+    for (var latNumber = 0; latNumber <= latitudeBands; latNumber++) {
+      var theta = latNumber * Math.PI / latitudeBands;
+      var sinTheta = Math.sin(theta);
+      var cosTheta = Math.cos(theta);
+      
+      for (var longNumber = 0; longNumber <= longitudeBands; longNumber++) {
+        var phi = longNumber * 2 * Math.PI / longitudeBands;
+        var sinPhi = Math.sin(phi);
+        var cosPhi = Math.cos(phi);
+        
+        var x = cosPhi * sinTheta;
+        var y = cosTheta;
+        var z = sinPhi * sinTheta;
+        var u = 1 - (longNumber / longitudeBands);
+        var v = 1 - (latNumber / latitudeBands);
+        
+        normalData.push(x);
+        normalData.push(y);
+        normalData.push(z);
+        textureCoordData.push(u);
+        textureCoordData.push(v);
+        vertexPositionData.push(radius * x);
+        vertexPositionData.push(radius * y);
+        vertexPositionData.push(radius * z);
+      }
+    }
+    
+    var indexData = [];
+    for (var latNumber = 0; latNumber < latitudeBands; latNumber++) {
+      for (var longNumber = 0; longNumber < longitudeBands; longNumber++) {
+        var first = (latNumber * (longitudeBands + 1)) + longNumber;
+        var second = first + longitudeBands + 1;
+        indexData.push(first);
+        indexData.push(second);
+        indexData.push(first + 1);
+        
+        indexData.push(second);
+        indexData.push(second + 1);
+        indexData.push(first + 1);
+      }
+    }
+    
+    moonVertexNormalBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexNormalBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new WebGLFloatArray(normalData), gl.STATIC_DRAW);
+    moonVertexNormalBuffer.itemSize = 3;
+    moonVertexNormalBuffer.numItems = normalData.length / 3;
+    
+    moonVertexTextureCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexTextureCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new WebGLFloatArray(textureCoordData), gl.STATIC_DRAW);
+    moonVertexTextureCoordBuffer.itemSize = 2;
+    moonVertexTextureCoordBuffer.numItems = textureCoordData.length / 2;
+
+    moonVertexPositionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexPositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new WebGLFloatArray(vertexPositionData), gl.STATIC_DRAW);
+    moonVertexPositionBuffer.itemSize = 3;
+    moonVertexPositionBuffer.numItems = vertexPositionData.length / 3;
+
+    moonVertexIndexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, moonVertexIndexBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new WebGLUnsignedShortArray(indexData), gl.STREAM_DRAW);
+    moonVertexIndexBuffer.itemSize = 1;
+    moonVertexIndexBuffer.numItems = indexData.length;
+    
+  }
+  
+  var diff = 0.0;
+
+  var teapotAngle = 180;
+
+  // Make a texture for ball locations
+  var posFBO1;
+  var posFBO2;
+
+  var turn = 0;
+  function handlePhysics() {
+    gl.disable(gl.DEPTH_TEST);
+  	var oldFBO;
+  	var newFBO;
+  	if (turn == 0) {
+  		oldFBO = posFBO1;
+  		newFBO = posFBO2;
+  		turn = 1;
+  	}
+  	else {
+  		oldFBO = posFBO2;
+  		newFBO = posFBO1;
+  		turn = 0;
+  	}
+  	gl.bindFramebuffer(gl.FRAMEBUFFER, newFBO.frameBuf);
+    gl.useProgram(physProgram);
+    gl.enableVertexAttribArray(physProgram.vertexPositionAttribute);
+    // alert(gl.viewportWidth + ", " + gl.viewportHeight);
+    gl.viewport(0, 0, 1000, 6);
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, oldFBO.texture);
+//    gl.bindTexture(gl.TEXTURE_2D, earthTexture);
+    gl.uniform1i(physProgram.samplerUniform, 0);
+
+    setParami(physProgram, "num_items", 1000);
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+    gl.vertexAttribPointer(physProgram.vertexPositionAttribute,
+    	lineBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.LINES, 0, lineBuffer.numItems);
+    gl.disableVertexAttribArray(physProgram.vertexPositionAttribute);
+  }
+
+  function debugPhysics() {
+    gl.disable(gl.DEPTH_TEST);
+  	var oldFBO;
+  	var newFBO;
+  	if (turn == 0) {
+  		oldFBO = posFBO1;
+  		newFBO = posFBO2;
+  	}
+  	else {
+  		oldFBO = posFBO2;
+  		newFBO = posFBO1;
+  	}
+  	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(physProgram);
+    gl.enableVertexAttribArray(physProgram.vertexPositionAttribute);
+    // alert(gl.viewportWidth + ", " + gl.viewportHeight);
+    gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, oldFBO.texture);
+//    gl.bindTexture(gl.TEXTURE_2D, earthTexture);
+    gl.uniform1i(physProgram.samplerUniform, 0);
+    
+    setParami(physProgram, "num_items", 1000);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+    gl.vertexAttribPointer(physProgram.vertexPositionAttribute,
+    	lineBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.LINES, 0, lineBuffer.numItems);
+    gl.disableVertexAttribArray(physProgram.vertexPositionAttribute);
+  }
+
+  function drawScene() {
+  	
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    
+  	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  	gl.useProgram(shaderProgram);
+  	gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+    gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+    gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+    gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    if (moonVertexPositionBuffer == null || moonVertexNormalBuffer == null || moonVertexTextureCoordBuffer == null || moonVertexIndexBuffer == null) {
+      return;
+    }
+
+    perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 1000.0);
+
+    var specularHighlights = document.getElementById("specular").checked;
+    gl.uniform1i(shaderProgram.showSpecularHighlightsUniform, specularHighlights);
+
+    var lighting = document.getElementById("lighting").checked;
+    gl.uniform1i(shaderProgram.useLightingUniform, lighting);
+    if (lighting) {
+      gl.uniform3f(
+        shaderProgram.ambientColorUniform,
+        parseFloat(document.getElementById("ambientR").value),
+        parseFloat(document.getElementById("ambientG").value),
+        parseFloat(document.getElementById("ambientB").value)
+      );
+
+      gl.uniform3f(
+        shaderProgram.pointLightingLocationUniform,
+        parseFloat(document.getElementById("lightPositionX").value),
+        parseFloat(document.getElementById("lightPositionY").value),
+        parseFloat(document.getElementById("lightPositionZ").value)
+      );
+
+      gl.uniform3f(
+        shaderProgram.pointLightingSpecularColorUniform,
+        parseFloat(document.getElementById("specularR").value),
+        parseFloat(document.getElementById("specularG").value),
+        parseFloat(document.getElementById("specularB").value)
+      );
+
+      gl.uniform3f(
+        shaderProgram.pointLightingDiffuseColorUniform,
+        parseFloat(document.getElementById("diffuseR").value),
+        parseFloat(document.getElementById("diffuseG").value),
+        parseFloat(document.getElementById("diffuseB").value)
+      );
+    }
+
+    var texture = document.getElementById("texture").value;
+    gl.uniform1i(shaderProgram.useTexturesUniform, texture != "none");
+
+    gl.activeTexture(gl.TEXTURE0);
+    if (texture == "earth") {
+      gl.bindTexture(gl.TEXTURE_2D, earthTexture);
+//      gl.bindTexture(gl.TEXTURE_2D, posFBO1.texture);
+    } else if (texture == "galvanized") {
+      gl.bindTexture(gl.TEXTURE_2D, galvanizedTexture);
+//      gl.bindTexture(gl.TEXTURE_2D, posFBO1.texture);
+    }
+    gl.uniform1i(shaderProgram.samplerUniform, 0);
+    
+    gl.activeTexture(gl.TEXTURE1);
+    if (turn == 1) {
+      gl.bindTexture(gl.TEXTURE_2D, posFBO1.texture);
+    } else {
+      gl.bindTexture(gl.TEXTURE_2D, posFBO2.texture);
+    }
+    gl.uniform1i(shaderProgram.pSamplerUniform, 1);
+
+    gl.uniform1f(shaderProgram.materialShininessUniform, parseFloat(document.getElementById("shininess").value));
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexPositionBuffer);
+    gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, moonVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexTextureCoordBuffer);
+    gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, moonVertexTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexNormalBuffer);
+    gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, moonVertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, moonVertexIndexBuffer);
+
+    loadIdentity();
+    mvTranslate($V([0.0,0.0,-100.0]));
+    mvRotate(23.4, [1, 0, -1]);
+    mvRotate(teapotAngle, [0, 1, 0]);
+    setMatrixUniforms();
+
+    for (var i = 0; i < 1000; i++) {
+      setParamf(shaderProgram, "number", i);
+      gl.drawElements(gl.TRIANGLES, moonVertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+    }
+    diff += 1;
+  	gl.disableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+    gl.disableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+    gl.disableVertexAttribArray(shaderProgram.textureCoordAttribute);
+  }
+
+  var lastTime = 0;
+  function animate() {
+    var timeNow = new Date().getTime();
+    if (lastTime != 0) {
+      var elapsed = timeNow - lastTime;
+
+      teapotAngle += 0.05 * elapsed;
+    }
+    lastTime = timeNow;
+    
+    // updateBalls();
+    
+  }
+
+  function tick() {
+    //drawScene();
+    animate();
+    diff += 1.0;
+  	document.getElementById("diff").value = diff;
+  	handlePhysics();
+  	// debugPhysics();
+  	drawScene();
+  }
+
+  function webGLStart() {
+    var canvas = document.getElementById("lesson14-canvas");
+    initGL(canvas);
+    initShaders();
+    initPhysics();
+    initTextures();
+    initBuffers();
+    initLines(1000);
+
+    var locs = randomLocs(1000);
+    var vels = randomVels(1000);
+    var dta = makeData(locs, vels, 1000);
+
+    posFBO1 = new makeFBO(gl, 1000, 6, dta);
+    posFBO2 = new makeFBO(gl, 1000, 6, dta);
+
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+    gl.clearDepth(1.0);
+
+    setInterval(tick, 15);
+  }
+
+/*
+<canvas id="lesson14-canvas" style="border: none;" width="1000" height="30"></canvas>
+<canvas id="lesson14-canvas" style="border: none;" width="500" height="500"></canvas>
+*/
+</script>
+
+</head>
+
+
+<body onload="webGLStart();">
+
+<canvas id="lesson14-canvas" style="border: none;" width="600" height="600"></canvas>
+
+  <br/>
+<td>Diff: <input type="text" id="diff" value="0" />
+
+  <input type="checkbox" id="specular" checked /> Show specular highlight<br/>
+<input type="checkbox" id="lighting" checked /> Use lighting<br/>
+Texture:
+<select id="texture">
+  <option value="none">None</option>
+  <option selected value="galvanized">Galvanized</option>
+  <option value="earth">Earth</option>
+</select>
+
+<br/>
+<h2>Material:</h2>
+
+<table style="border: 0; padding: 10px;">
+<tr>
+<td><b>Shininess:</b>
+<td><input type="text" id="shininess" value="32.0" />
+</tr>
+</table>
+
+<h2>Point light:</h2>
+
+<table style="border: 0; padding: 10px;">
+<tr>
+<td><b>Location:</b>
+<td>X: <input type="text" id="lightPositionX" value="-10.0" />
+<td>Y: <input type="text" id="lightPositionY" value="4.0" />
+<td>Z: <input type="text" id="lightPositionZ" value="-20.0" />
+</tr>
+<tr>
+<td><b>Specular colour:</b>
+<td>R: <input type="text" id="specularR" value="0.8" />
+<td>G: <input type="text" id="specularG" value="0.8" />
+<td>B: <input type="text" id="specularB" value="0.8" />
+</tr>
+<tr>
+<td><b>Diffuse colour:</b>
+<td>R: <input type="text" id="diffuseR" value="0.8" />
+<td>G: <input type="text" id="diffuseG" value="0.8" />
+<td>B: <input type="text" id="diffuseB" value="0.8" />
+</tr>
+</table>
+
+<h2>Ambient light:</h2>
+<table style="border: 0; padding: 10px;">
+<tr>
+<td><b>Colour:</b>
+<td>R: <input type="text" id="ambientR" value="0.2" />
+<td>G: <input type="text" id="ambientG" value="0.2" />
+<td>B: <input type="text" id="ambientB" value="0.2" />
+</tr>
+</table>
+
+</body>
+
+</html>
+
