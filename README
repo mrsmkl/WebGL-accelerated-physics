@@ -1,0 +1,14 @@
+
+balls.html         -- No GPU physics
+balls_collide.html -- With GPU physics
+
+Sample of GPU accelerated physics simulation with WebGL.
+The page layout and rendering spheres are copied from
+"Learning WebGL" (http://learningwebgl.com).
+
+Currently this is just a sample and not usable library.
+I intend to clean up the code soon, though.
+
+Send any ideas and hints to mrsmkl@gmail.com.
+
+
